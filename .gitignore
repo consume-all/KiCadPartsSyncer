@@ -1,0 +1,75 @@
+# --- Python basics ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- Qt / PySide6 build & cache files ---
+*.qmlc
+*.qmltypes
+*.qrc
+*.pro.user
+*.moc
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.qtf
+*.qtcreator*
+*.user
+
+# --- Build & distribution outputs ---
+build/
+dist/
+*.egg-info/
+*.spec
+*.manifest
+
+# --- Logs & temp files ---
+*.log
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
+
+# --- IDE folders ---
+.vscode/
+.idea/
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+
+# --- Windows executables / libraries ---
+*.exe
+*.dll
+*.lib
+*.exp
+
+# --- Qt plugin & runtime folders (auto-generated or copied) ---
+plugins/
+platforms/
+imageformats/
+translations/
+qml/
+Qt*/        # catch Qt6Core.dll, etc. safely
+PySide6*/   # prevents committing installed wheel contents
+
+# --- Project-specific extras ---
+/__pycache__/
+/*.sqlite3
+/.pytest_cache/
+*.db
+*.db-journal
+
+# --- Optional local config files ---
+*.env
+.env.*
+config_local.*
+secrets.*
