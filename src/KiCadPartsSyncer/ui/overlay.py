@@ -7,11 +7,9 @@ from PySide6.QtGui import QGuiApplication, QCursor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QFrame, QApplication
 
 try:
-    # Optional Windows click-through helpers
-    from ..infrastructure.system.win_clickthrough import enable_click_through as _win_enable_click, disable_click_through as _win_disable_click
+    from ..infrastructure.system import win_clickthrough
 except Exception:
-    _win_enable_click = None
-    _win_disable_click = None
+    win_clickthrough = None
 
 
 class Overlay(QWidget):
@@ -37,7 +35,10 @@ class Overlay(QWidget):
         super().__init__(None)
         self._hub = hub
         self._click_through = False
-        self._frozen = False
+        self._frozen = False #ToDo: This should probably be removed now
+        self._is_expanded = False
+        # self._collapsed_size = QSize(120, 60) #ToDo: Probably should remove these
+        # self._expanded_size = QSize(120, 220)
 
         # Drag state
         self._drag_active = False
@@ -46,6 +47,7 @@ class Overlay(QWidget):
         # Window flags: topmost, not in taskbar, frameless (we add manual dragging)
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
 
         # Minimal UI card
         outer = QVBoxLayout(self)
@@ -54,27 +56,113 @@ class Overlay(QWidget):
         self._card = QFrame(self)
         self._card.setObjectName("hud")
         self._card.setStyleSheet("""
-            #hud { background:#111; color:#eaeaea; border:1px solid #555; border-radius:8px; }
-            QLabel#t { font-size:12pt; font-weight:600; padding:8px 10px 2px 10px; }
-            QLabel#b { padding:0 10px 8px 10px; }
-            QPushButton { margin:0 10px 10px 10px; }
+            #hud {
+                background: rgba(10, 10, 10, 100);
+                color:#FFFFFF;
+                border:1px solid #555;
+                border-radius:8px;
+            }
+            QLabel#t {
+                font-size:12pt;
+                font-weight:600;
+                padding:8px 10px 2px 10px;
+                color: #FFFFFF
+            }
+            QLabel#b {
+                padding:0 10px 8px 10px;
+                color: #FFFFFF
+            }
+            QPushButton {
+                margin:0 10px 10px 10px;
+            }
+            QPushButton#toggle {
+                margin: 0;
+                padding: 0;
+                color: #FFFFFF;
+                background: transparent;
+                border: none;
+            }
+            QPushButton#toggle:hover {
+                color: #CCCCCC;
+            }
+            QPushButton#panel_button {
+                min-width: 20px;
+                max-width: 20px;
+                min-height: 20px;
+                max-height: 20px;
+                padding: 0;
+                margin: 2px 0;
+                border-radius: 10px;
+                background: transparent;
+                color: #FFFFFF;
+                border: 1px solid #555;
+            }
+            QPushButton#panel_button:hover {
+                background: rgba(255, 255, 255, 25);
+            }
         """)
 
         inner = QVBoxLayout(self._card)
-        inner.setContentsMargins(8, 8, 8, 8)
+        inner.setContentsMargins(4, 8, 4, 8)
 
-        self._title = QLabel("KiCad Companion HUD", self._card); self._title.setObjectName("t")
-        self._body  = QLabel("Idle", self._card);                self._body.setObjectName("b")
+        self._panel = QWidget(self._card)
+        self._panel_layout = QVBoxLayout(self._panel)
+        self._panel_layout.setContentsMargins(0, 0, 0, 0)
+        # start with the panel collapsed
+        self._panel.setVisible(False)
 
-        self._btnHide = QPushButton("Hide", self._card)
-        self._btnHide.clicked.connect(self.hide_overlay)
+        # Panel Buttons
+        # 🡅 Push, 🡇 Pull, ⚙ Settings, 👁 Hide
+        self._btn_push = QPushButton("🡅", self._panel)
+        self._btn_push.setObjectName("panel_button")
+        self._btn_push.setToolTip("Push")
 
-        inner.addWidget(self._title)
-        inner.addWidget(self._body)
-        inner.addWidget(self._btnHide)
+        self._btn_pull = QPushButton("🡇", self._panel)
+        self._btn_pull.setObjectName("panel_button")
+        self._btn_pull.setToolTip("Pull")
+
+        self._btn_settings = QPushButton("⚙", self._panel)
+        self._btn_settings.setObjectName("panel_button")
+        self._btn_settings.setToolTip("Settings")
+
+        self._btn_hide = QPushButton("👁", self._panel)
+        self._btn_hide.setObjectName("panel_button")
+        self._btn_hide.setToolTip("Hide")
+
+        self._panel_layout.addWidget(self._btn_push,     0, Qt.AlignHCenter)
+        self._panel_layout.addWidget(self._btn_pull,     0, Qt.AlignHCenter)
+        self._panel_layout.addWidget(self._btn_settings, 0, Qt.AlignHCenter)
+        self._panel_layout.addWidget(self._btn_hide,     0, Qt.AlignHCenter)
+
+        self._title = QLabel("KiCad Parts Syncer", self) #ToDo: Remove
+        self._title.setObjectName("t") #ToDo: Remove
+        self._title.hide() #ToDo: Remove
+        
+
+        self._body  = QLabel("Idle", self) #ToDo: Remove
+        self._body.setObjectName("b") #ToDo: Remove
+        self._body.hide() #ToDo: Remove
+
+        self._toggle = QPushButton("▼", self._card)
+        self._toggle.setObjectName("toggle")
+        self._toggle.setFlat(True)
+        self._toggle.setFixedSize(22, 18)
+        self._toggle.setToolTip("Expand")
+        self._toggle.clicked.connect(self._toggle_expanded)
+
+        # ToDo: Remove the following & any other associated code
+
+        # self._btnHide = QPushButton("Hide", self._card)
+        # self._btnHide.clicked.connect(self.hide_overlay)
+        # inner.addWidget(self._title)
+        # inner.addWidget(self._body)
+        # inner.addWidget(self._btnHide)
+        inner.addWidget(self._panel)
+        inner.addStretch()
+        inner.addWidget(self._toggle, 0, Qt.AlignHCenter)
 
         outer.addWidget(self._card)
-        self.resize(360, 140)
+        self._set_expanded(False)
 
         # Thread-safe wiring: ensure UI ops run on GUI thread
         self._sig_show.connect(self._show_impl, Qt.QueuedConnection)
@@ -86,9 +174,9 @@ class Overlay(QWidget):
 
     # ---------- public API (thread-safe entry points) ----------
 
-    def apply_prefs(self, prefs: Dict) -> None:
-        # Reserved for future opacity / theming.
-        pass
+    # def apply_prefs(self, prefs: Dict) -> None:
+    #     # Reserved for future opacity / theming.
+    #     pass
 
     def appear_idle(self) -> None:
         self.hide_overlay()
@@ -110,8 +198,8 @@ class Overlay(QWidget):
         else:
             self._sig_hide.emit()
 
-    def show_centered(self) -> None:
-        self._show_impl(None, None)
+    # def show_centered(self) -> None:
+    #     self._show_impl(None, None)
 
     def flash(self) -> None:
         self.show_overlay()
@@ -135,14 +223,15 @@ class Overlay(QWidget):
         self.setWindowFlags(f)
 
         # Apply Win32 extended style as well for robustness, if available
-        try:
-            if enabled and _win_enable_click:
-                _win_enable_click(self)
-            elif (not enabled) and _win_disable_click:
-                _win_disable_click(self)
-        except Exception:
-            # Non-fatal; Qt flag path still active
-            pass
+        if win_clickthrough is None:
+            # Fallback: Qt-only behavior
+            self.setAttribute(Qt.WA_TransparentForMouseEvents, enabled)
+            return
+
+        if enabled:
+            win_clickthrough.enable_click_through(self)
+        else:
+            win_clickthrough.disable_click_through(self)
 
         if was_visible:
             # Flags changes require a show() to take effect; restore original position.
@@ -150,12 +239,37 @@ class Overlay(QWidget):
             self.raise_()
             self.setGeometry(old_geom)
 
-    def show_frozen(self, frozen: bool) -> None:
-        self._frozen = bool(frozen)
-        if self.isVisible():
-            self._title.setText("Companion (Frozen)" if frozen else "Companion (Active)")
+    # def show_frozen(self, frozen: bool) -> None:
+    #     self._frozen = bool(frozen)
+    #     if self.isVisible():
+    #         self._title.setText("Companion (Frozen)" if frozen else "Companion (Active)")
 
     # ---------- Qt overrides / helpers ----------
+    def _set_expanded(self, expanded: bool) -> None:
+        self._is_expanded = bool(expanded)
+        self._panel.setVisible(self._is_expanded)
+        self._toggle.setText("▲" if self._is_expanded else "▼")
+        self._toggle.setToolTip("Collapse" if self._is_expanded else "Expand")
+        # target = self._expanded_size if self._is_expanded else self._collapsed_size
+        # self.resize(target)
+        self._update_size_for_state()
+
+    def _toggle_expanded(self) -> None:
+        self._set_expanded(not self._is_expanded)
+
+    def _update_size_for_state(self) -> None:
+        card_layout = self._card.layout()
+        if card_layout is None:
+            return
+
+        # Recompute based on current visibility (_panel visible/hidden).
+        card_layout.invalidate()
+        hint = card_layout.sizeHint()
+
+        width = 120
+        height = hint.height()
+
+        self.setFixedSize(width, height)
 
     def paintEvent(self, e):
         from PySide6.QtGui import QPainter, QColor, QBrush
@@ -180,7 +294,11 @@ class Overlay(QWidget):
         super().resizeEvent(e)
 
     def sizeHint(self) -> QSize:
-        return QSize(360, 140)
+        card_layout = self._card.layout()
+        if card_layout is not None:
+            hint = card_layout.sizeHint()
+            return QSize(120, hint.height())
+        return QSize(120, 40)
 
     def eventFilter(self, obj: QObject, ev: QEvent) -> bool:
         # Only allow dragging when not in click-through mode
@@ -206,8 +324,8 @@ class Overlay(QWidget):
 
         return super().eventFilter(obj, ev)
 
-    def _restore_border(self) -> None:
-        self._card.setStyleSheet(self._card.styleSheet())
+    # def _restore_border(self) -> None:
+    #     self._card.setStyleSheet(self._card.styleSheet())
 
     def _on_gui_thread(self) -> bool:
         app = QGuiApplication.instance() or QApplication.instance()
@@ -254,6 +372,7 @@ class Overlay(QWidget):
 
     @Slot()
     def _hide_impl(self) -> None:
+        self._set_expanded(False)
         self.hide()
 
     def _nudge_front(self) -> None:

@@ -73,3 +73,4 @@ PySide6*/   # prevents committing installed wheel contents
 .env.*
 config_local.*
 secrets.*
+Documents/

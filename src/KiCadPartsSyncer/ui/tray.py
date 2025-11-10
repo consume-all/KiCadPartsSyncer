@@ -1,6 +1,9 @@
 from __future__ import annotations
-from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QApplication, QStyle
-from PySide6.QtGui import QAction
+import os
+from pathlib import Path
+from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
+from PySide6.QtGui import QAction, QIcon
+
 
 class Tray:
     """
@@ -18,24 +21,50 @@ class Tray:
         self.overlay = overlay
         self.hub = hub
 
-        icon = app.style().standardIcon(QStyle.SP_ComputerIcon)
+        # Resolve icon path relative to this file
+        base_dir = Path(__file__).resolve().parent
+        icon_path = base_dir / "resources" / "KiCadPartsSyncer.ico"
+
+        icon = QIcon(str(icon_path))
         self.tray = QSystemTrayIcon(icon, self.app)
-        self.tray.setToolTip("KiCad Companion")
+        self.tray.setToolTip("KiCad Parts Syncer")
 
-        menu = QMenu()
-        a_show = QAction("Show HUD (near cursor)"); a_show.triggered.connect(lambda: self.overlay.show_overlay()); menu.addAction(a_show)
-        a_center = QAction("Show HUD (center)");    a_center.triggered.connect(self.overlay.show_centered);     menu.addAction(a_center)
-        a_flash = QAction("Flash HUD");             a_flash.triggered.connect(self.overlay.flash);             menu.addAction(a_flash)
-        a_hide = QAction("Hide HUD");               a_hide.triggered.connect(self.overlay.hide_overlay);       menu.addAction(a_hide)
-        menu.addSeparator()
-        a_quit = QAction("Quit");                   a_quit.triggered.connect(self.app.quit);                   menu.addAction(a_quit)
+        self.menu = QMenu()
 
-        self.tray.setContextMenu(menu)
+        a_center = QAction("Show HUD", self.menu)  # shows in center of screen
+        # WAS: a_center.triggered.connect(self.overlay.show_centered)
+        a_center.triggered.connect(self._show_centered)
+        self.menu.addAction(a_center)
+
+        a_hide = QAction("Hide HUD", self.menu)
+        a_hide.triggered.connect(self.overlay.hide_overlay)
+        self.menu.addAction(a_hide)
+
+        self.menu.addSeparator()
+
+        a_quit = QAction("Quit", self.menu)
+        a_quit.triggered.connect(self.app.quit)
+        self.menu.addAction(a_quit)
+
+        self.tray.setContextMenu(self.menu)
+
         self.tray.setVisible(True)
         self.tray.show()
 
         # left-click toggles HUD quickly
         self.tray.activated.connect(self._on_click)
+
+    def _show_centered(self) -> None:
+        """
+        Prefer overlay.show_centered(); fall back to show_overlay(); then show().
+        Keeps existing behavior if show_centered exists, avoids AttributeError if not.
+        """
+        if hasattr(self.overlay, "show_centered"):
+            self.overlay.show_centered()
+        elif hasattr(self.overlay, "show_overlay"):
+            self.overlay.show_overlay()
+        else:
+            self.overlay.show()
 
     def _on_click(self, reason: QSystemTrayIcon.ActivationReason):
         if reason == QSystemTrayIcon.Trigger:
