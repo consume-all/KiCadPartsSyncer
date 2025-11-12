@@ -11,6 +11,7 @@ try:
 except Exception:
     win_clickthrough = None
 
+from KiCadPartsSyncer.infrastructure.system.settings_opener import open_settings_in_editor
 
 class Overlay(QWidget):
     """
@@ -30,6 +31,9 @@ class Overlay(QWidget):
     # Internal signals to marshal calls to the GUI thread
     _sig_show = Signal(object, object)   # (info: Optional[Dict], pos: Optional[QPoint])
     _sig_hide = Signal()
+    _sig_set_status = Signal(str)
+    _sig_pull_requested = Signal()
+    _sig_push_requested = Signal()
 
     def __init__(self, hub):
         super().__init__(None)
@@ -37,6 +41,7 @@ class Overlay(QWidget):
         self._click_through = False
         self._frozen = False #ToDo: This should probably be removed now
         self._is_expanded = False
+        self._status = "unknown"  # 'unknown' | 'clean' | 'diverged'
         # self._collapsed_size = QSize(120, 60) #ToDo: Probably should remove these
         # self._expanded_size = QSize(120, 220)
 
@@ -116,18 +121,22 @@ class Overlay(QWidget):
         self._btn_push = QPushButton("🡅", self._panel)
         self._btn_push.setObjectName("panel_button")
         self._btn_push.setToolTip("Push")
+        self._btn_push.clicked.connect(self._on_push_clicked)
 
         self._btn_pull = QPushButton("🡇", self._panel)
         self._btn_pull.setObjectName("panel_button")
         self._btn_pull.setToolTip("Pull")
+        self._btn_pull.clicked.connect(self._on_pull_clicked)
 
         self._btn_settings = QPushButton("⚙", self._panel)
         self._btn_settings.setObjectName("panel_button")
         self._btn_settings.setToolTip("Settings")
+        self._btn_settings.clicked.connect(self._on_settings_clicked)
 
         self._btn_hide = QPushButton("👁", self._panel)
         self._btn_hide.setObjectName("panel_button")
         self._btn_hide.setToolTip("Hide")
+        self._btn_hide.clicked.connect(self.hide_overlay)
 
         self._panel_layout.addWidget(self._btn_push,     0, Qt.AlignHCenter)
         self._panel_layout.addWidget(self._btn_pull,     0, Qt.AlignHCenter)
@@ -167,6 +176,7 @@ class Overlay(QWidget):
         # Thread-safe wiring: ensure UI ops run on GUI thread
         self._sig_show.connect(self._show_impl, Qt.QueuedConnection)
         self._sig_hide.connect(self._hide_impl, Qt.QueuedConnection)
+        self._sig_set_status.connect(self._set_status_impl, Qt.QueuedConnection)
 
         # Accept mouse events on both the frame and the top-level for dragging
         self._card.installEventFilter(self)
@@ -177,6 +187,18 @@ class Overlay(QWidget):
     # def apply_prefs(self, prefs: Dict) -> None:
     #     # Reserved for future opacity / theming.
     #     pass
+
+    def set_repo_status(self, status: str) -> None:
+        """
+        Thread-safe: set HUD status:
+          - 'unknown'  -> yellow (not configured / cannot check)
+          - 'clean'    -> green  (in sync)
+          - 'diverged' -> red    (remote or local ahead)
+        """
+        if self._on_gui_thread():
+            self._set_status_impl(status)
+        else:
+            self._sig_set_status.emit(status)
 
     def appear_idle(self) -> None:
         self.hide_overlay()
@@ -245,6 +267,27 @@ class Overlay(QWidget):
     #         self._title.setText("Companion (Frozen)" if frozen else "Companion (Active)")
 
     # ---------- Qt overrides / helpers ----------
+    @Slot()
+    def _on_push_clicked(self) -> None:
+        self._sig_push_requested.emit()
+
+    @Slot()
+    def _on_settings_clicked(self) -> None:
+        open_settings_in_editor()
+
+    @Slot()
+    def _on_pull_clicked(self) -> None:
+        self._sig_pull_requested.emit()
+
+    @Slot(str)
+    def _set_status_impl(self, status: str) -> None:
+        s = (status or "").strip().lower()
+        if s not in ("unknown", "clean", "diverged"):
+            s = "unknown"
+        if s != self._status:
+            self._status = s
+            self.update()  # trigger repaint with new color
+
     def _set_expanded(self, expanded: bool) -> None:
         self._is_expanded = bool(expanded)
         self._panel.setVisible(self._is_expanded)
@@ -273,14 +316,31 @@ class Overlay(QWidget):
 
     def paintEvent(self, e):
         from PySide6.QtGui import QPainter, QColor, QBrush
+
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        p.setBrush(QBrush(QColor(20, 20, 22, 200)))
-        if getattr(self, "_click_through", False):
-            border = QColor(0, 200, 255, 220)
+
+        # Map _status -> background/border
+        if getattr(self, "_status", "unknown") == "clean":
+            # In sync
+            bg = QColor(0, 170, 0, 220)        # green
+            border = QColor(0, 90, 0, 230)
+        elif self._status == "diverged":
+            # Remote or local ahead
+            bg = QColor(200, 40, 40, 220)      # red
+            border = QColor(255, 100, 100, 230)
         else:
-            border = QColor(255, 255, 255, 64)
+            # Default / unknown / not configured / cannot check
+            bg = QColor(230, 200, 40, 220)     # yellow
+            border = QColor(180, 140, 0, 230)
+
+        # If click-through is enabled, make border fully opaque so it stands out
+        if getattr(self, "_click_through", False):
+            border = QColor(border.red(), border.green(), border.blue(), 255)
+
+        p.setBrush(QBrush(bg))
         p.setPen(border)
+
         r = self.rect().adjusted(1, 1, -1, -1)
         p.drawRoundedRect(r, 10, 10)
 
