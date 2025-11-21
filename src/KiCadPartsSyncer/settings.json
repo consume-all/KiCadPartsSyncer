@@ -1,12 +1,9 @@
 {
-    "repoPollIntervalSeconds" : 150,
-    "repository" : {
-        "name": "KiCadPartsLibrary",
-        "localPath" : "C:\\dev\\work\\KiCadPartsLibraries",
-        "remoteUrl": "https://github.com/cellular-tracking-technologies/KiCadLibraries.git",
-        "auth": {
-            "credential_target": "KiCadPartsSyncer:Git",
-            "username": "mnolz"
-        }
-    }
+  "repoPollIntervalSeconds": 60,
+  "repository": {
+    "name": "KiCadPartsLibrary",
+    "localPath": "C:\\dev\\work\\KiCadPartsLibraries",
+    "remoteUrl": "https://github.com/cellular-tracking-technologies/KiCadLibraries.git",
+    "remoteName": "origin"
+  }
 }

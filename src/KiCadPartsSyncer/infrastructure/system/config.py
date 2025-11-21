@@ -25,18 +25,23 @@ def load_settings(settings_path: Path | None = None) -> Dict[str, Any]:
     """
     Load the KiCadPartsSyncer settings.json.
 
-    Expected (minimal) structure:
+    Expected (minimal) structure for SSH/system-Git setups:
 
         {
+          "repoPollIntervalSeconds": 60,          # optional
           "repository": {
             "name": "KiCadPartsLibrary",
             "localPath": "C:\\dev\\work\\KiCadPartsLibraries",
-            "auth": {
-              "credential_target": "KiCadPartsSyncer:Git",
-              "username": "mnolz"
-            }
+            "remoteName": "origin",               # optional, defaults to 'origin'
+            "remoteUrl": "https://github.com/..." # optional, metadata only
+            // "auth": { ... }                    # optional legacy HTTPS/PAT config
           }
         }
+
+    Notes
+    -----
+    - 'auth' is now optional and only used by legacy HTTPS/PAT-based flows.
+      For SSH-based setups (recommended), 'auth' can be omitted entirely.
     """
     path = settings_path or DEFAULT_SETTINGS_PATH
 
@@ -65,27 +70,34 @@ def get_repository_auth(settings: Dict[str, Any]) -> Tuple[str, str]:
     """
     Extract (credential_target, username) from the loaded settings.
 
+    This is **legacy** and only meaningful for HTTPS/PAT-based auth flows.
+    For SSH/system-Git setups, 'repository.auth' may be omitted entirely.
+
+    Behavior
+    --------
+    - If 'repository.auth' exists and has 'credential_target' and 'username',
+      those values are returned.
+    - If it is missing or incomplete, we return sensible defaults:
+          target  = "KiCadPartsSyncer:Git"
+          username = ""
+      so callers that still use this helper won't crash, but the values are
+      effectively placeholders.
+
     Returns
     -------
     (credential_target, username)
-
-    Raises RuntimeError if keys are missing or empty.
     """
-    try:
-        auth_cfg = settings["repository"]["auth"]
-        target = auth_cfg["credential_target"]
-        username = auth_cfg["username"]
-    except KeyError as exc:
-        raise RuntimeError(
-            "Missing 'repository.auth.credential_target' or "
-            "'repository.auth.username' in settings.json"
-        ) from exc
+    repo_cfg = settings.get("repository") or {}
+    auth_cfg = repo_cfg.get("auth") or {}
 
-    if not target or not username:
-        raise RuntimeError(
-            "'repository.auth.credential_target' and 'repository.auth.username' "
-            "must be non-empty."
-        )
+    target = auth_cfg.get("credential_target", "KiCadPartsSyncer:Git")
+    username = auth_cfg.get("username", "")
+
+    # Normalize to strings
+    if not isinstance(target, str):
+        target = "KiCadPartsSyncer:Git"
+    if not isinstance(username, str):
+        username = ""
 
     return target, username
 
@@ -128,19 +140,30 @@ def get_repository_remote_name(settings: Dict[str, Any]) -> str:
     """
     Extract the repository remote name.
 
-    If missing/empty/invalid, defaults to 'origin'.
+    Settings
+    --------
+    - Preferred key:  repository.remoteName
+    - Legacy key:     repository.remote
+    - If both are missing/invalid, defaults to 'origin'.
     """
     repo_cfg = settings.get("repository") or {}
-    remote = repo_cfg.get("remote", "origin")
 
-    if not isinstance(remote, str):
-        return "origin"
+    # Preferred new key
+    remote = repo_cfg.get("remoteName")
+    if isinstance(remote, str):
+        remote = remote.strip()
+        if remote:
+            return remote
 
-    remote = remote.strip()
-    if not remote:
-        return "origin"
+    # Legacy fallback: 'remote'
+    legacy_remote = repo_cfg.get("remote")
+    if isinstance(legacy_remote, str):
+        legacy_remote = legacy_remote.strip()
+        if legacy_remote:
+            return legacy_remote
 
-    return remote
+    # Default
+    return "origin"
 
 
 def get_repo_poll_interval_seconds(

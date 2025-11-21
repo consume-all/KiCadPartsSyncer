@@ -9,15 +9,10 @@ import git  # type: ignore
 
 from ..system.config import (
     load_settings,
-    get_repository_auth,
     get_repository_local_path,
+    get_repository_remote_name,
     DEFAULT_SETTINGS_PATH,
 )
-from ..system.credentials import (
-    get_secret,
-    get_auth_secret_from_config,
-)
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -26,7 +21,7 @@ from ..system.credentials import (
 
 def _sanitize_remote_url(base_url: str) -> str:
     """
-    Remove any embedded credentials from the given URL.
+    Remove any embedded credentials from the given URL when printing.
 
     Example:
       https://user:pass@github.com/owner/repo.git
@@ -45,40 +40,6 @@ def _sanitize_remote_url(base_url: str) -> str:
 
     cleaned = parsed._replace(netloc=clean_netloc)
     return urlunparse(cleaned)
-
-
-def _build_remote_url_with_credentials(
-    base_url: str,
-    username: str,
-    token: str,
-) -> str:
-    """
-    Inject credentials into an HTTPS remote URL.
-
-    Example:
-      base_url = https://github.com/owner/repo.git
-      => https://username:token@github.com/owner/repo.git
-
-    Any existing credentials in base_url are stripped first.
-    """
-    # Only touch HTTP(S) URLs; SSH or others are left unchanged.
-    if not base_url.startswith("http://") and not base_url.startswith("https://"):
-        return base_url
-
-    # Strip any existing user:pass@
-    cleaned = _sanitize_remote_url(base_url)
-    parsed = urlparse(cleaned)
-
-    if not parsed.hostname:
-        # Malformed; just return original and let git complain
-        return base_url
-
-    host = parsed.hostname
-    port = f":{parsed.port}" if parsed.port else ""
-    netloc = f"{username}:{token}@{host}{port}"
-
-    updated = parsed._replace(netloc=netloc)
-    return urlunparse(updated)
 
 
 def _ahead_behind(repo: git.Repo, local_ref: str, remote_ref: str) -> Tuple[int, int]:
@@ -111,8 +72,13 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
     Uses settings.json:
         repository.name
         repository.localPath
-        repository.auth.credential_target
-        repository.auth.username
+        repository.remoteName (preferred) or repository.remote (legacy)
+
+    Auth
+    ----
+    This function no longer uses any explicit credentials or PATs.
+    It relies entirely on the underlying Git/SSH configuration (e.g. your
+    SSH key in ~/.ssh and .git/config remote URL like git@github.com:...).
 
     Emits:
         [Git] ...
@@ -127,20 +93,6 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
         repo_name = repo_cfg["name"]
     except KeyError as exc:
         raise RuntimeError("Missing 'repository.name' in settings.json") from exc
-
-    # ----- auth -----
-    target, username = get_repository_auth(settings)
-
-    token = get_auth_secret_from_config(DEFAULT_SETTINGS_PATH)
-    if token is None:
-        token = get_secret(target, username)
-
-    if token is None:
-        raise RuntimeError(
-            "No credential found in Windows Credential Manager for "
-            "target='{}', username='{}'. "
-            "Check your Generic Credential configuration.".format(target, username)
-        )
 
     # ----- repo path -----
     if explicit_repo_path is not None:
@@ -169,8 +121,9 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
             "Repository at '{}' is bare; expected a working copy.".format(repo_path)
         )
 
-    # Use 'origin' as default remote
-    remote_name = "origin"
+    # Remote name from settings (remoteName / remote / default 'origin')
+    remote_name = get_repository_remote_name(settings)
+
     if remote_name not in [r.name for r in repo.remotes]:
         raise RuntimeError(
             "Remote '{}' not found in repository at '{}'.".format(
@@ -179,7 +132,8 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
         )
 
     remote = repo.remote(remote_name)
-    original_url = _sanitize_remote_url(remote.url)
+    original_url = remote.url
+    display_url = _sanitize_remote_url(original_url)
 
     # ----- detached HEAD handling -----
     # If HEAD is detached, we treat it as "diverged"/non-clean for HUD purposes.
@@ -205,22 +159,10 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
             "cannot determine current branch.".format(repo_path)
         ) from exc
 
-    # ----- fetch with temporary credential-injected URL -----
-    remote_url_with_creds = _build_remote_url_with_credentials(
-        original_url,
-        username,
-        token,
-    )
-
+    # ----- fetch using existing Git/SSH credentials -----
     try:
         # Avoid interactive prompts
         with repo.git.custom_environment(GIT_TERMINAL_PROMPT="0"):
-            if remote_url_with_creds != remote.url:
-                remote.set_url(remote_url_with_creds)
-
-            # Mask token in logs
-            display_url = remote_url_with_creds.replace(token, "*****")
-
             print(
                 "[Git] Fetching from {} for repository '{}'".format(
                     display_url,
@@ -228,10 +170,10 @@ def check_remote_status(explicit_repo_path: Optional[Path] = None) -> None:
                 )
             )
             remote.fetch(prune=True)
-    finally:
-        # Always restore original, clean URL (no creds)
-        if remote.url != original_url:
-            remote.set_url(original_url)
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to fetch from remote '{}': {}".format(display_url, exc)
+        ) from exc
 
     # ----- compare local vs remote -----
     local_ref = "HEAD"

@@ -13,29 +13,28 @@ def push_once() -> Tuple[bool, str]:
     """
     Perform a single `git push` on the configured repository.
 
+    Uses:
+      - config.load_settings()
+      - config.get_repository_local_path()
+      - config.get_repository_remote_name()  # remoteName/remote/'origin'
+
+    Auth:
+      - Relies entirely on your Git/SSH configuration (SSH keys, etc.).
+      - No PAT or credential manager integration here.
+
     Returns:
         (success, message)
-
-    Behavior:
-        - Reads settings.json via config.load_settings()
-        - Resolves repository.localPath
-        - Resolves repository.remote (defaults to 'origin')
-        - Runs: git -C <repo_path> push <remote>
-        - Disables interactive prompts so we never hang waiting for credentials
     """
-    # 1) Load settings
     try:
         settings = config.load_settings()
     except RuntimeError as exc:
         return False, str(exc)
 
-    # 2) Resolve repo path
     try:
         repo_path = config.get_repository_local_path(settings)
     except RuntimeError as exc:
         return False, str(exc)
 
-    # 3) Remote name
     remote_name = config.get_repository_remote_name(settings)
 
     cmd = [
@@ -46,7 +45,6 @@ def push_once() -> Tuple[bool, str]:
         remote_name,
     ]
 
-    # Disable interactive prompts so we never hang waiting for credentials.
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
 
@@ -75,3 +73,10 @@ def push_once() -> Tuple[bool, str]:
         stdout = "git push completed successfully."
 
     return True, stdout
+
+
+if __name__ == "__main__":
+    ok, msg = push_once()
+    print("success:", ok)
+    print("message:")
+    print(msg)
